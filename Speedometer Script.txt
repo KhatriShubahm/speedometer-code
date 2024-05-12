@@ -1,0 +1,195 @@
+#include <LiquidCrystal.h>
+const int rs = 7, en = 2, d4 = 13, d5 = 12, d6 = 11, d7 = 10;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+
+#define CLOCK_FREQUENCY 16000000
+volatile unsigned int secs = 0;
+
+#define magnet 3 //magnetic switch
+int count = 0; //revolutions of the wheel
+double t = 0; //timestamp since start of program
+double distance = 0.0013048795; //distance traveled in miles in one revolution of the wheel if wheel diameter is 26.32 in
+double velocity = 0; //value updated every revolutions of wheel
+double lastTime = 0; //timestamp of last revoution
+double odometer = 0; //total distance traveled
+volatile bool state = false; //state of magnetic switch
+
+// custom characters
+uint8_t empty[8] = {0b00000,0b00000,0b00000,0b00000,0b00000,0b00000,0b00000,0b00000};
+uint8_t l[8] = {0b10000,0b10000,0b10000,0b10000,0b10000,0b10000,0b10000,0b10000};
+uint8_t ml[8] = {0b11000,0b11000,0b11000,0b11000,0b11000,0b11000,0b11000,0b11000};
+uint8_t center[8] = {0b11100,0b11100,0b11100,0b11100,0b11100,0b11100,0b11100,0b11100};
+uint8_t mr[8] = {0b11110,0b11110,0b11110,0b11110,0b11110,0b11110,0b11110,0b11110};
+uint8_t r[8] = {0b11111,0b11111,0b11111,0b11111,0b11111,0b11111,0b11111,0b11111};
+
+String custChars[6] = {"\x01","\x02","\x03","\x04","\x05","\x06"};
+
+// int i = 0;
+// int c = 0;
+int idleCount = 0; //seconds since last revolution
+int oneLoopCount = 0; //to only clear lcd once when in idle
+
+// ISR function 
+void updateSpeed(){
+  state = true; //true when magnetic switch is closed
+}
+
+// timer driven interrrupt to track idle time
+ISR(TIMER1_COMPA_vect) {
+ idleCount = idleCount + 1;
+}
+
+void setup() {
+  Serial.begin(9600);
+  // set up the LCD's number of columns and rows:
+  lcd.begin(16, 2);
+  
+  // inputpullup seems to be required for this sensor; need to drive current maybe?
+  pinMode(magnet, INPUT_PULLUP);
+  
+  // choose the interrupt sensing mode
+  attachInterrupt(digitalPinToInterrupt(magnet), updateSpeed, FALLING);
+  
+  //set frequency of the timer, timer driven interrupt every T = 1/freq
+  setupTimer(1.0);
+  
+  // create custom characters
+  lcd.createChar(1, empty);
+  lcd.createChar(2, l);
+  lcd.createChar(3, ml);
+  lcd.createChar(4, center);
+  lcd.createChar(5, mr);
+  lcd.createChar(6, r);
+}
+
+void loop() {
+  t = (millis() / 1000.0);
+  int h = floor(t/3600);
+  int m = floor(t/60) - (60*floor(t/3600));
+  int s = floor(t) - (60*floor(t/60));
+
+//  lcd.setCursor(0, 0);
+//  lcd.print(h);
+//  lcd.setCursor(1, 0);
+//  lcd.print(":");
+//  lcd.setCursor(3, 0);
+//  lcd.print(m);
+//  lcd.setCursor(4, 0);
+//  lcd.print(":");
+//  lcd.setCursor(5, 0);
+//  lcd.print(s);
+
+    lcd.setCursor(0,0);
+    lcd.print(m);
+    lcd.setCursor(2,0);
+    lcd.print("min");
+
+  if(idleCount >= 7){
+    velocity = 0.0;
+
+    // clear LCD once
+    if(oneLoopCount == 0){
+      lcd.clear();
+      oneLoopCount = 1;
+    }
+
+    // print velocity
+    lcd.setCursor(7, 0);
+    lcd.print(velocity);
+    lcd.setCursor(13, 0);
+    lcd.print("mph");
+
+    // print odometer
+    lcd.setCursor(0,1);
+    lcd.print(odometer);
+    lcd.setCursor(5, 1);
+    lcd.print("mi");
+
+    // print velocity graphic
+    int bars = floor(velocity);
+    int sects = bars/5;
+    lcd.setCursor(8+sects,1);
+    bars = bars - 5*sects;
+    lcd.print(custChars[bars]);
+    for(int u = 0;u<sects;u++){
+      lcd.setCursor(8+u,1);
+      lcd.print(custChars[5]);
+    }
+  }
+  
+  if(state){
+    // update revolution count and velocity calculation
+    count++;
+    velocity = ((distance * 3600)/((t - lastTime)));
+
+    // zero velocities over 50 mph as assumed double counts, can be adjusted if you fast
+    if((t - lastTime) <= 0.09396){
+      velocity = 0.0;
+    }
+
+    // clear LCD each iteration for graphic
+    lcd.clear();
+
+    // print velocity
+    lcd.setCursor(7, 0);
+    lcd.print(velocity);
+    lcd.setCursor(13, 0);
+    lcd.print("mph");
+    
+    // i += 1;
+    // if(i > 2){
+    //   c += 1;
+    //   if(c > 4){
+    //     c = 0;
+    //   }
+    //   //RGB_color_picker(c);
+    //   i = 0;
+    // }
+    
+    // update variables 
+    lastTime = t;
+    state = false;
+    idleCount = 0;
+    oneLoopCount = 0;
+  }
+
+  // recalculate odometer
+  odometer = count * distance;
+
+  // print odometer
+  lcd.setCursor(0,1);
+  lcd.print(odometer);
+  lcd.setCursor(5, 1);
+  lcd.print("mi");
+
+  // print velocity graphic
+  int bars = floor(velocity);
+  int sects = bars/5;
+  lcd.setCursor(8+sects,1);
+  bars = bars - 5*sects;
+  lcd.print(custChars[bars]);
+  for(int u = 0;u<sects;u++){
+    lcd.setCursor(8+u,1);
+    lcd.print(custChars[5]);
+  }
+}
+
+void setupTimer(float freq){
+// set up Timer
+ noInterrupts(); // stop interrupts
+
+ //set Timer1 interrupt at 1 Hz = 1 time per second
+ TCCR1A = 0; // initialize TCCR1A register
+ TCCR1B = 0; // initialize TCCR1B register
+ TCNT1 = 0; // initialize counter value to 0
+ // turn on CTC mode
+ TCCR1B |= (1 << WGM12);
+ // set CS10 and CS12 bits for 1024 prescaler
+ TCCR1B |= (1 << CS12) | (1 << CS10);
+ // set compare match register for 1hz increments
+ OCR1A = CLOCK_FREQUENCY/freq/1024 - 1; 
+ // enable timer compare match A interrupt
+ TIMSK1 |= (1 << OCIE1A);
+
+ interrupts(); // allow interrupts
+}
